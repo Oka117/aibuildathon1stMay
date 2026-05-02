@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { SfShell } from "~/app/_components/sf-shell";
 import { api } from "~/trpc/react";
 
@@ -25,6 +25,8 @@ const days = [
   "2/5 (Sat)",
   "3/5 (Sun)",
 ];
+
+const dayShortNames = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const hours = Array.from({ length: 13 }, (_, i) => 8 + i); // 8 AM .. 8 PM
 
@@ -108,9 +110,21 @@ const HOUR_HEIGHT = 64; // px
 export default function TimetablePage() {
   const utils = api.useUtils();
   const eventsQuery = api.calendar.list.useQuery();
+  const addEvent = api.calendar.add.useMutation({
+    onSuccess: () => utils.calendar.list.invalidate(),
+  });
   const removeEvent = api.calendar.remove.useMutation({
     onSuccess: () => utils.calendar.list.invalidate(),
   });
+
+  // Modal state for the "+ Add event" button
+  const [modalOpen, setModalOpen] = useState(false);
+  const [formTitle, setFormTitle] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formDay, setFormDay] = useState(0); // Mon
+  const [formStart, setFormStart] = useState(9);
+  const [formDuration, setFormDuration] = useState(1);
+  const [formError, setFormError] = useState<string | null>(null);
 
   // Merge fixed class blocks with user-accepted suggestions from the planner.
   const allBlocks: Block[] = useMemo(() => {
@@ -119,13 +133,55 @@ export default function TimetablePage() {
       start: e.start,
       duration: e.duration,
       title: e.title,
-      type: "AI suggestion",
-      room: e.description || "Added from Planner",
+      type: e.source === "manual" ? "Manual event" : "AI suggestion",
+      room: e.description || "Added from Timetable",
       color: "bg-violet-100 text-violet-700 border-violet-300",
       eventId: e.id,
     }));
     return [...fixedBlocks, ...fromStore];
   }, [eventsQuery.data]);
+
+  function resetForm() {
+    setFormTitle("");
+    setFormDescription("");
+    setFormDay(0);
+    setFormStart(9);
+    setFormDuration(1);
+    setFormError(null);
+  }
+
+  function openModal() {
+    resetForm();
+    setModalOpen(true);
+  }
+
+  function closeModal() {
+    setModalOpen(false);
+    resetForm();
+  }
+
+  function submitEvent(e: React.FormEvent) {
+    e.preventDefault();
+    if (!formTitle.trim()) {
+      setFormError("Please enter a title.");
+      return;
+    }
+    setFormError(null);
+    addEvent.mutate(
+      {
+        title: formTitle.trim(),
+        description: formDescription.trim() || undefined,
+        day: formDay,
+        start: formStart,
+        duration: formDuration,
+        source: "manual",
+      },
+      {
+        onSuccess: () => closeModal(),
+        onError: (err) => setFormError(err.message),
+      },
+    );
+  }
 
   return (
     <SfShell>
@@ -134,12 +190,12 @@ export default function TimetablePage() {
           <h1 className="text-2xl font-bold text-slate-900 md:text-3xl">
             Timetable
           </h1>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-slate-600">
             Week of 27 April – 3 May · Semester 1, 2026
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button className="grid h-9 w-9 place-items-center rounded-xl bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50">
+          <button className="grid h-9 w-9 place-items-center rounded-xl bg-white/70 text-slate-600 ring-1 ring-white/60 backdrop-blur transition hover:bg-white">
             <svg
               className="h-4 w-4"
               viewBox="0 0 24 24"
@@ -152,10 +208,10 @@ export default function TimetablePage() {
               <path d="m15 18-6-6 6-6" />
             </svg>
           </button>
-          <button className="rounded-xl bg-white px-3 py-2 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50">
+          <button className="rounded-xl bg-white/70 px-3 py-2 text-xs font-semibold text-slate-700 ring-1 ring-white/60 backdrop-blur transition hover:bg-white">
             Today
           </button>
-          <button className="grid h-9 w-9 place-items-center rounded-xl bg-white text-slate-500 ring-1 ring-slate-200 hover:bg-slate-50">
+          <button className="grid h-9 w-9 place-items-center rounded-xl bg-white/70 text-slate-600 ring-1 ring-white/60 backdrop-blur transition hover:bg-white">
             <svg
               className="h-4 w-4"
               viewBox="0 0 24 24"
@@ -168,15 +224,18 @@ export default function TimetablePage() {
               <path d="m9 18 6-6-6-6" />
             </svg>
           </button>
-          <button className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-semibold text-white shadow-sm hover:bg-indigo-700">
+          <button
+            onClick={openModal}
+            className="rounded-xl bg-sky-600 px-3 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700"
+          >
             + Add event
           </button>
         </div>
       </section>
 
-      <div className="overflow-hidden rounded-2xl bg-white shadow-sm ring-1 ring-slate-100">
+      <div className="overflow-hidden rounded-2xl bg-white/85 shadow-sm ring-1 ring-white/60 backdrop-blur">
         {/* Day header */}
-        <div className="grid grid-cols-[64px_repeat(7,minmax(0,1fr))] border-b border-slate-100 bg-slate-50 text-xs font-semibold text-slate-500">
+        <div className="grid grid-cols-[64px_repeat(7,minmax(0,1fr))] border-b border-white/60 bg-white/40 text-xs font-semibold text-slate-600">
           <div className="px-2 py-3 text-center"></div>
           {days.map((d, i) => (
             <div
@@ -198,7 +257,7 @@ export default function TimetablePage() {
               {hours.map((h) => (
                 <div
                   key={h}
-                  className="flex items-start justify-end border-b border-slate-100 pt-1 pr-2 text-[11px] text-slate-400"
+                  className="flex items-start justify-end border-b border-white/60 pt-1 pr-2 text-[11px] text-slate-500"
                   style={{ height: HOUR_HEIGHT }}
                 >
                   {formatHour(h)}
@@ -210,14 +269,14 @@ export default function TimetablePage() {
             {days.map((d, dayIndex) => (
               <div
                 key={d}
-                className={`relative border-l border-slate-100 ${
+                className={`relative border-l border-white/60 ${
                   dayIndex >= 5 ? "bg-amber-50/40" : ""
                 }`}
               >
                 {hours.map((h) => (
                   <div
                     key={h}
-                    className="border-b border-slate-100"
+                    className="border-b border-white/60"
                     style={{ height: HOUR_HEIGHT }}
                   />
                 ))}
@@ -276,17 +335,157 @@ export default function TimetablePage() {
         <Legend color="bg-rose-300" label="COMP3242 — Studio" />
         <Legend color="bg-sky-300" label="COMP2620 — Logic" />
         <Legend color="bg-emerald-300" label="Tutorials" />
-        <Legend color="bg-violet-300" label="From Planner" />
+        <Legend color="bg-violet-300" label="Manual / Planner" />
       </div>
+
+      {/* Add-event modal */}
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-30 grid place-items-center bg-slate-900/30 p-4 backdrop-blur-sm"
+          onClick={closeModal}
+        >
+          <form
+            onSubmit={submitEvent}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  Add event
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  This event lands on your calendar (violet block).
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Close"
+              >
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <label className="mt-4 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+              Title
+            </label>
+            <input
+              autoFocus
+              value={formTitle}
+              onChange={(e) => setFormTitle(e.target.value)}
+              required
+              placeholder="Study group at library"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+            />
+
+            <label className="mt-3 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+              Description (optional)
+            </label>
+            <textarea
+              value={formDescription}
+              onChange={(e) => setFormDescription(e.target.value)}
+              rows={2}
+              placeholder="Add a short note…"
+              className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+            />
+
+            <div className="mt-3 grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                  Day
+                </label>
+                <select
+                  value={formDay}
+                  onChange={(e) => setFormDay(Number(e.target.value))}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm text-slate-700"
+                >
+                  {dayShortNames.map((d, i) => (
+                    <option key={d} value={i}>
+                      {d}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                  Start
+                </label>
+                <select
+                  value={formStart}
+                  onChange={(e) => setFormStart(Number(e.target.value))}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm text-slate-700"
+                >
+                  {Array.from({ length: 14 }, (_, i) => i + 7).map((h) => (
+                    <option key={h} value={h}>
+                      {formatHour(h)}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                  Length
+                </label>
+                <select
+                  value={formDuration}
+                  onChange={(e) => setFormDuration(Number(e.target.value))}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm text-slate-700"
+                >
+                  {[0.5, 1, 1.5, 2, 2.5, 3, 4].map((d) => (
+                    <option key={d} value={d}>
+                      {d} h
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {formError && (
+              <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600 ring-1 ring-rose-100">
+                {formError}
+              </p>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={addEvent.isPending || !formTitle.trim()}
+                className="rounded-full bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-sky-300"
+              >
+                {addEvent.isPending ? "Adding…" : "Add to calendar"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </SfShell>
   );
 }
 
 function Legend({ color, label }: { color: string; label: string }) {
   return (
-    <div className="flex items-center gap-2 rounded-xl bg-white px-3 py-2 ring-1 ring-slate-100">
+    <div className="flex items-center gap-2 rounded-xl bg-white/85 px-3 py-2 ring-1 ring-white/60 backdrop-blur">
       <span className={`h-2.5 w-2.5 rounded-full ${color}`} />
-      <span className="truncate text-slate-600">{label}</span>
+      <span className="truncate text-slate-700">{label}</span>
     </div>
   );
 }

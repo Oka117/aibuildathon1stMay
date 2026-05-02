@@ -5,6 +5,7 @@ import { cardStore } from "~/server/data/store";
 
 const PriorityEnum = z.enum(["high", "medium", "low"]);
 const TypeEnum = z.enum(["todo", "event"]);
+const StateEnum = z.enum(["pending", "in_progress", "done"]);
 const CoverEnum = z.enum([
   "skyline",
   "mountain",
@@ -27,6 +28,7 @@ const CreateInput = z.object({
 });
 
 const IdInput = z.object({ id: z.string().min(1) });
+const SetStateInput = IdInput.extend({ state: StateEnum });
 
 const UpdateInput = IdInput.extend({
   name: z.string().min(1).max(120).optional(),
@@ -36,6 +38,7 @@ const UpdateInput = IdInput.extend({
   recommendReason: z.string().max(500).optional(),
   tag: z.string().max(40).optional(),
   cover: CoverEnum.optional(),
+  state: StateEnum.optional(),
   done: z.boolean().optional(),
 });
 
@@ -56,6 +59,12 @@ export const cardRouter = createTRPCRouter({
     return cardStore.update(id, patch);
   }),
 
+  /** Lifecycle setter — pending → in_progress → done. */
+  setState: publicProcedure
+    .input(SetStateInput)
+    .mutation(({ input }) => cardStore.setState(input.id, input.state)),
+
+  /** Legacy toggle: pending ↔ done. Kept for the planner / timetable UIs. */
   toggleDone: publicProcedure
     .input(IdInput)
     .mutation(({ input }) => cardStore.toggleDone(input.id)),

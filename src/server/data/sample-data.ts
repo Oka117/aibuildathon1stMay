@@ -12,6 +12,10 @@
  *      first load. Each card carries a tag (course code), cover background,
  *      and pomotodo-style metadata so the new UI can render directly off it.
  *
+ *      Sample card datetimes are expressed as `dayOffset + time` so the seed
+ *      is always relative to whenever the demo first runs. That keeps the
+ *      Home schedule and week strip non-empty regardless of today's date.
+ *
  * Used by:
  *   - the AI fallback in src/server/lib/ai.ts (sampleTasks → ranked plan)
  *   - cardStore.seedIfEmpty() in src/server/data/store.ts (sampleCards)
@@ -43,7 +47,7 @@ export type CoverKey =
   | "forest";
 
 export type SampleCard = {
-  /** Display name (Chinese-friendly, matching the pomotodo aesthetic). */
+  /** Display name. */
   name: string;
   /** 1–2 sentence English description for the AI / table views. */
   description: string;
@@ -53,8 +57,14 @@ export type SampleCard = {
   cover: CoverKey;
   /** Priority for downstream sorting. */
   priority: Priority;
-  /** Optional ISO-like datetime — purely informational on the Tasks page. */
-  datetime?: string;
+  /**
+   * Days from today to schedule this card. 0 = today, 1 = tomorrow, etc.
+   * The store resolves this into an absolute "YYYY-MM-DD HH:MM" datetime
+   * at seed time so the schedule always lines up with the visible week.
+   */
+  dayOffset: number;
+  /** "HH:MM" 24-hour time-of-day. */
+  time: string;
   /** Optional recommend reason carried from the planner concept. */
   recommendReason?: string;
 };
@@ -155,8 +165,7 @@ export const sampleTasks: SampleTask[] = [
   },
   {
     name: "Office hours — Calculus / discrete maths",
-    description:
-      "Bring problem set q4 and the spot you got stuck on Tuesday.",
+    description: "Bring problem set q4 and the spot you got stuck on Tuesday.",
     datetime: "2026-05-05 10:00",
     recommendReason:
       "20 min with the tutor saves 2 h of solo confusion. Free; you've already paid for it.",
@@ -174,6 +183,12 @@ export const sampleTasks: SampleTask[] = [
 /* -------------------------------------------------------------------------
  * 2. Pomotodo-style seed cards — used by cardStore.seedIfEmpty()
  *    These power the Tasks page list shown in the new UI.
+ *
+ *    dayOffset is interpreted at seed time:
+ *       0  = today
+ *       1  = tomorrow
+ *       2  = day after tomorrow … etc.
+ *    Values are chosen so the seed always populates the current week.
  * ------------------------------------------------------------------------- */
 
 export const sampleCards: SampleCard[] = [
@@ -184,51 +199,10 @@ export const sampleCards: SampleCard[] = [
     tag: "COMP4610",
     cover: "skyline",
     priority: "high",
-    datetime: "2026-05-04 09:00",
+    dayOffset: 0,
+    time: "09:00",
     recommendReason:
-      "Tomorrow's tutorial builds on this — 25 min now beats 2 h of catch-up Thursday night.",
-  },
-  {
-    name: "COMP3242 — Studio",
-    description:
-      "Workshop 06 prep: skim the brief and write the three questions you want to ask in lab.",
-    tag: "COMP3242",
-    cover: "mountain",
-    priority: "high",
-    datetime: "2026-05-05 14:00",
-    recommendReason:
-      "Pre-reading defuses Wednesday lab anxiety.",
-  },
-  {
-    name: "COMP2620 — Logic",
-    description:
-      "Natural-deduction proof set: do questions 1–3 first to build momentum.",
-    tag: "COMP2620",
-    cover: "campus",
-    priority: "medium",
-    datetime: "2026-05-06 19:00",
-    recommendReason: "Due Monday — splitting it across two evenings keeps stress low.",
-  },
-  {
-    name: "COMP3900 — Capstone",
-    description:
-      "Skim the project handout, highlight the three deliverables, list two questions for the supervisor.",
-    tag: "COMP3900",
-    cover: "night",
-    priority: "medium",
-    datetime: "2026-05-07 20:00",
-    recommendReason: "Capstone proposal is due Friday — 40 min now is plenty.",
-  },
-  {
-    name: "Study group — Logic proofs",
-    description:
-      "Library Room 3 with Sam and Priya. Bring questions from last week's quiz.",
-    tag: "COMP2620",
-    cover: "library",
-    priority: "medium",
-    datetime: "2026-05-05 16:00",
-    recommendReason:
-      "Talking proofs out loud is the highest-yield study mode for this course.",
+      "Tomorrow's tutorial builds on this — 25 min now beats 2 h of catch-up later.",
   },
   {
     name: "Walk · Sullivans Creek",
@@ -237,18 +211,68 @@ export const sampleCards: SampleCard[] = [
     tag: "Wellbeing",
     cover: "forest",
     priority: "medium",
-    datetime: "2026-05-04 17:30",
+    dayOffset: 0,
+    time: "17:30",
     recommendReason:
       "Your stress trended high yesterday — short walks reset focus better than scrolling.",
   },
   {
     name: "Sleep by 11 PM",
-    description: "Stop coding at 10:30, screens off by 10:45, lights off at 11:00.",
+    description:
+      "Stop coding at 10:30, screens off by 10:45, lights off at 11:00.",
     tag: "Wellbeing",
     cover: "ocean",
     priority: "high",
-    datetime: "2026-05-04 22:30",
+    dayOffset: 0,
+    time: "22:30",
     recommendReason:
       "Your average bedtime drifted to 1:15 AM — one earlier night recovers a lot.",
+  },
+  {
+    name: "COMP3242 — Studio",
+    description:
+      "Workshop 06 prep: skim the brief and write the three questions you want to ask in lab.",
+    tag: "COMP3242",
+    cover: "mountain",
+    priority: "high",
+    dayOffset: 1,
+    time: "14:00",
+    recommendReason: "Pre-reading defuses Wednesday lab anxiety.",
+  },
+  {
+    name: "Study group — Logic proofs",
+    description:
+      "Library Room 3 with Sam and Priya. Bring questions from last week's quiz.",
+    tag: "COMP2620",
+    cover: "library",
+    priority: "medium",
+    dayOffset: 1,
+    time: "16:00",
+    recommendReason:
+      "Talking proofs out loud is the highest-yield study mode for this course.",
+  },
+  {
+    name: "COMP2620 — Logic",
+    description:
+      "Natural-deduction proof set: do questions 1–3 first to build momentum.",
+    tag: "COMP2620",
+    cover: "campus",
+    priority: "medium",
+    dayOffset: 2,
+    time: "19:00",
+    recommendReason:
+      "Due Monday — splitting it across two evenings keeps stress low.",
+  },
+  {
+    name: "COMP3900 — Capstone",
+    description:
+      "Skim the project handout, highlight the three deliverables, list two questions for the supervisor.",
+    tag: "COMP3900",
+    cover: "night",
+    priority: "medium",
+    dayOffset: 3,
+    time: "20:00",
+    recommendReason:
+      "Capstone proposal is due Friday — 40 min now is plenty.",
   },
 ];

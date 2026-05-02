@@ -6,6 +6,7 @@ import { api } from "~/trpc/react";
 
 type Priority = "high" | "medium" | "low";
 type CardType = "todo" | "event";
+type CardState = "pending" | "in_progress" | "done";
 type CoverKey =
   | "skyline"
   | "mountain"
@@ -25,17 +26,17 @@ type CardLike = {
   recommendReason?: string | null;
   tag?: string | null;
   cover?: CoverKey | null;
+  state: CardState;
   done: boolean;
   createdAt: string;
 };
 
-type FilterId = "all" | "today" | "upcoming" | "done";
+type FilterId = "all" | "in_progress" | "done";
 
-const filters: { id: FilterId; label: string; zh: string }[] = [
-  { id: "all", label: "All", zh: "全部" },
-  { id: "today", label: "Today", zh: "今天" },
-  { id: "upcoming", label: "Scheduled", zh: "计划" },
-  { id: "done", label: "Completed", zh: "完成" },
+const filters: { id: FilterId; label: string }[] = [
+  { id: "all", label: "All" },
+  { id: "in_progress", label: "In Progress" },
+  { id: "done", label: "Completed" },
 ];
 
 /**
@@ -92,18 +93,6 @@ const COVER_FALLBACK_ROTATION: CoverKey[] = [
 ];
 
 /**
- * Decide the due bucket for a card. Cards without a datetime fall into
- * "today" so they don't disappear from the default view.
- */
-function dueBucket(datetime?: string | null): "today" | "upcoming" {
-  if (!datetime) return "today";
-  const dateStr = datetime.slice(0, 10);
-  const today = new Date();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-  return dateStr === todayStr ? "today" : "upcoming";
-}
-
-/**
  * Pick a cover for a card. Honors `c.cover` if set; otherwise derives a
  * deterministic one from the index so reloads stay stable.
  */
@@ -121,12 +110,22 @@ export default function TasksPage() {
   const [query, setQuery] = useState("");
   const [draft, setDraft] = useState("");
 
+  // Detailed-add modal state (the header "+ New task" button opens this).
+  const [modalOpen, setModalOpen] = useState(false);
+  const [mName, setMName] = useState("");
+  const [mDescription, setMDescription] = useState("");
+  const [mTag, setMTag] = useState("");
+  const [mPriority, setMPriority] = useState<Priority>("medium");
+  const [mDate, setMDate] = useState(""); // YYYY-MM-DD
+  const [mTime, setMTime] = useState(""); // HH:MM
+  const [mError, setMError] = useState<string | null>(null);
+
   // ── Server data ────────────────────────────────────────────────────────────
   const cardsQuery = api.card.list.useQuery();
   const create = api.card.create.useMutation({
     onSuccess: () => utils.card.list.invalidate(),
   });
-  const toggleDoneMut = api.card.toggleDone.useMutation({
+  const setStateMut = api.card.setState.useMutation({
     onSuccess: () => utils.card.list.invalidate(),
   });
   const removeMut = api.card.remove.useMutation({
@@ -139,27 +138,20 @@ export default function TasksPage() {
   );
 
   const counts = useMemo(() => {
+    // Treat any leftover "pending" cards as in-progress for counting purposes.
     return {
-      all: cards.filter((c) => !c.done).length,
-      today: cards.filter(
-        (c) => !c.done && dueBucket(c.datetime) === "today",
-      ).length,
-      upcoming: cards.filter(
-        (c) => !c.done && dueBucket(c.datetime) === "upcoming",
-      ).length,
-      done: cards.filter((c) => c.done).length,
+      all: cards.length,
+      in_progress: cards.filter((c) => c.state !== "done").length,
+      done: cards.filter((c) => c.state === "done").length,
     } satisfies Record<FilterId, number>;
   }, [cards]);
 
   const visible = useMemo(() => {
     return cards
       .filter((c) => {
-        if (filter === "today")
-          return !c.done && dueBucket(c.datetime) === "today";
-        if (filter === "upcoming")
-          return !c.done && dueBucket(c.datetime) === "upcoming";
-        if (filter === "done") return c.done;
-        return !c.done;
+        if (filter === "all") return true;
+        if (filter === "in_progress") return c.state !== "done";
+        return c.state === "done";
       })
       .filter((c) =>
         query.trim()
@@ -168,8 +160,11 @@ export default function TasksPage() {
       );
   }, [cards, filter, query]);
 
-  function toggleDone(id: string) {
-    toggleDoneMut.mutate({ id });
+  function advance(c: CardLike) {
+    // Two-state cycle now: in_progress ↔ done. Any stray "pending" card is
+    // treated as in-progress so a click takes it directly to done.
+    const next: CardState = c.state === "done" ? "in_progress" : "done";
+    setStateMut.mutate({ id: c.id, state: next });
   }
 
   function addTask() {
@@ -181,16 +176,61 @@ export default function TasksPage() {
     );
   }
 
+  function resetModal() {
+    setMName("");
+    setMDescription("");
+    setMTag("");
+    setMPriority("medium");
+    setMDate("");
+    setMTime("");
+    setMError(null);
+  }
+
+  function openModal() {
+    resetModal();
+    setModalOpen(true);
+  }
+
+  function closeModal() {
+    setModalOpen(false);
+    resetModal();
+  }
+
+  function submitModal(e: React.FormEvent) {
+    e.preventDefault();
+    if (!mName.trim()) {
+      setMError("Name is required.");
+      return;
+    }
+    const datetime =
+      mDate && mTime ? `${mDate} ${mTime}` : mDate ? `${mDate} 09:00` : undefined;
+    create.mutate(
+      {
+        type: "event",
+        name: mName.trim(),
+        description: mDescription.trim() || undefined,
+        tag: mTag.trim() || undefined,
+        priority: mPriority,
+        datetime,
+      },
+      {
+        onSuccess: () => closeModal(),
+        onError: (err) => setMError(err.message),
+      },
+    );
+  }
+
   return (
     <SfShell>
       {/* Header row — title + add control */}
       <header className="mb-6 flex flex-col items-start justify-between gap-4 lg:flex-row lg:items-center">
         <div>
           <h1 className="text-3xl font-bold text-slate-900 md:text-4xl">
-            待办 · Tasks
+            Tasks
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Pomotodo-style focus list — click 开始 to mark a task complete.
+            Click <span className="font-semibold text-emerald-700">Complete</span>{" "}
+            to finish a task. Reopen anything you want to put back in progress.
           </p>
         </div>
 
@@ -211,7 +251,7 @@ export default function TasksPage() {
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search tasks 搜索"
+              placeholder="Search tasks"
               className="flex-1 bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
             />
           </div>
@@ -249,7 +289,7 @@ export default function TasksPage() {
                       : "bg-white/55 text-slate-700 ring-1 ring-white/60 hover:bg-white/75"
                   }`}
                 >
-                  {f.label} · {f.zh}
+                  {f.label}
                   <span
                     className={`ml-1.5 inline-flex h-4 min-w-[1rem] items-center justify-center rounded-full px-1 text-[10px] font-bold ${
                       active
@@ -270,7 +310,7 @@ export default function TasksPage() {
         </div>
       </div>
 
-      {/* Inline add bar (desktop-friendly width) */}
+      {/* Inline add bar */}
       <div className="mb-6 flex items-center gap-2 rounded-2xl bg-white/75 px-3 py-2 shadow-sm ring-1 ring-white/60 backdrop-blur">
         <button
           onClick={addTask}
@@ -304,7 +344,7 @@ export default function TasksPage() {
         </button>
       </div>
 
-      {/* Banner card grid — pomotodo style, sized for desktop */}
+      {/* Banner card grid */}
       {cardsQuery.isLoading ? (
         <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, i) => (
@@ -328,11 +368,11 @@ export default function TasksPage() {
             <circle cx="12" cy="12" r="9" />
             <path d="m9 12 2 2 4-4" />
           </svg>
-          <p className="mt-2 text-sm font-medium">已完成所有提醒事项</p>
+          <p className="mt-2 text-sm font-medium">Nothing to show here</p>
           <p className="text-[11px] text-slate-500">
             {cards.length === 0
               ? "Generate a plan or add a task to get started."
-              : "All caught up — nice work."}
+              : "Try a different filter."}
           </p>
         </div>
       ) : (
@@ -342,7 +382,7 @@ export default function TasksPage() {
               key={c.id}
               card={c}
               cover={pickCover(c, i)}
-              onStart={() => toggleDone(c.id)}
+              onAdvance={() => advance(c)}
               onRemove={() => removeMut.mutate({ id: c.id })}
             />
           ))}
@@ -355,16 +395,29 @@ export default function TasksPage() {
 function BannerCard({
   card,
   cover,
-  onStart,
+  onAdvance,
   onRemove,
 }: {
   card: CardLike;
   cover: CoverKey;
-  onStart: () => void;
+  onAdvance: () => void;
   onRemove: () => void;
 }) {
   const style = coverStyles[cover];
   const tag = card.tag ?? "Task";
+
+  // Two-state UI: anything that isn't done is treated as in-progress, so the
+  // button alternates between Complete (active) and Reopen (finished).
+  const action =
+    card.state === "done"
+      ? { label: "Reopen", color: "bg-white/15 hover:bg-white/30" }
+      : {
+          label: "Complete",
+          color: "bg-emerald-500/80 hover:bg-emerald-500",
+        };
+
+  const stateBadge = card.state === "done" ? "Completed" : "In progress";
+
   return (
     <li
       className="group relative flex h-32 items-stretch overflow-hidden rounded-2xl shadow-md ring-1 ring-white/40 transition hover:shadow-lg"
@@ -381,7 +434,7 @@ function BannerCard({
         <div className="flex items-center gap-2">
           <p
             className={`truncate text-xl font-bold drop-shadow-sm ${
-              card.done ? "line-through opacity-60" : ""
+              card.state === "done" ? "line-through opacity-60" : ""
             }`}
           >
             {card.name}
@@ -391,7 +444,9 @@ function BannerCard({
           <span className="rounded-full bg-white/25 px-2 py-0.5 font-semibold backdrop-blur">
             {tag}
           </span>
-          <span>正计时</span>
+          <span className="rounded-full bg-white/25 px-2 py-0.5 font-semibold backdrop-blur">
+            {stateBadge}
+          </span>
           {card.priority && (
             <span className="rounded-full bg-white/25 px-2 py-0.5 font-semibold capitalize backdrop-blur">
               {card.priority}
@@ -408,14 +463,14 @@ function BannerCard({
         )}
       </div>
 
-      {/* Right "开始" / Done button */}
+      {/* Right action button */}
       <button
-        onClick={onStart}
-        className="relative z-[1] flex shrink-0 items-center justify-center px-6 text-white transition hover:bg-white/10"
-        aria-label={card.done ? "mark active" : "start"}
+        onClick={onAdvance}
+        className={`relative z-[1] flex shrink-0 items-center justify-center px-6 text-white transition ${action.color}`}
+        aria-label={action.label.toLowerCase()}
       >
-        <span className="text-2xl font-bold tracking-wide drop-shadow">
-          {card.done ? "完成" : "开始"}
+        <span className="text-lg font-bold tracking-wide drop-shadow lg:text-xl">
+          {action.label}
         </span>
       </button>
 
