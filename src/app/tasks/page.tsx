@@ -31,10 +31,11 @@ type CardLike = {
   createdAt: string;
 };
 
-type FilterId = "all" | "in_progress" | "done";
+type FilterId = "all" | "pending" | "in_progress" | "done";
 
 const filters: { id: FilterId; label: string }[] = [
   { id: "all", label: "All" },
+  { id: "pending", label: "Pending" },
   { id: "in_progress", label: "In Progress" },
   { id: "done", label: "Completed" },
 ];
@@ -138,10 +139,10 @@ export default function TasksPage() {
   );
 
   const counts = useMemo(() => {
-    // Treat any leftover "pending" cards as in-progress for counting purposes.
     return {
       all: cards.length,
-      in_progress: cards.filter((c) => c.state !== "done").length,
+      pending: cards.filter((c) => c.state === "pending").length,
+      in_progress: cards.filter((c) => c.state === "in_progress").length,
       done: cards.filter((c) => c.state === "done").length,
     } satisfies Record<FilterId, number>;
   }, [cards]);
@@ -150,20 +151,27 @@ export default function TasksPage() {
     return cards
       .filter((c) => {
         if (filter === "all") return true;
-        if (filter === "in_progress") return c.state !== "done";
+        if (filter === "pending") return c.state === "pending";
+        if (filter === "in_progress") return c.state === "in_progress";
         return c.state === "done";
       })
       .filter((c) =>
         query.trim()
-          ? c.name.toLowerCase().includes(query.trim().toLowerCase())
+          ? c.name.toLowerCase().includes(query.trim().toLowerCase()) ||
+            (c.description ?? "")
+              .toLowerCase()
+              .includes(query.trim().toLowerCase()) ||
+            (c.tag ?? "").toLowerCase().includes(query.trim().toLowerCase())
           : true,
       );
   }, [cards, filter, query]);
 
   function advance(c: CardLike) {
-    // Two-state cycle now: in_progress ↔ done. Any stray "pending" card is
-    // treated as in-progress so a click takes it directly to done.
-    const next: CardState = c.state === "done" ? "in_progress" : "done";
+    // Three-state cycle: pending → in_progress → done → in_progress.
+    let next: CardState;
+    if (c.state === "pending") next = "in_progress";
+    else if (c.state === "in_progress") next = "done";
+    else next = "in_progress";
     setStateMut.mutate({ id: c.id, state: next });
   }
 
@@ -229,8 +237,11 @@ export default function TasksPage() {
             Tasks
           </h1>
           <p className="mt-1 text-sm text-slate-600">
-            Click <span className="font-semibold text-emerald-700">Complete</span>{" "}
-            to finish a task. Reopen anything you want to put back in progress.
+            New tasks land in{" "}
+            <span className="font-semibold text-slate-700">Pending</span>. Click{" "}
+            <span className="font-semibold text-sky-700">Start</span> to begin,{" "}
+            <span className="font-semibold text-emerald-700">Complete</span> to
+            finish.
           </p>
         </div>
 
@@ -256,7 +267,7 @@ export default function TasksPage() {
             />
           </div>
           <button
-            onClick={addTask}
+            onClick={openModal}
             className="inline-flex items-center gap-2 rounded-full bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-md transition hover:bg-sky-700"
           >
             <svg
@@ -388,6 +399,150 @@ export default function TasksPage() {
           ))}
         </ul>
       )}
+
+      {/* Detailed "New task" modal */}
+      {modalOpen && (
+        <div
+          className="fixed inset-0 z-30 grid place-items-center bg-slate-900/30 p-4 backdrop-blur-sm"
+          onClick={closeModal}
+        >
+          <form
+            onSubmit={submitModal}
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200"
+          >
+            <div className="flex items-start justify-between">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  New task
+                </h3>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Capture the details — they save straight to your task list.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                aria-label="Close"
+              >
+                <svg
+                  className="h-4 w-4"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <path d="M18 6 6 18M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            <label className="mt-4 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+              Name
+            </label>
+            <input
+              autoFocus
+              value={mName}
+              onChange={(e) => setMName(e.target.value)}
+              required
+              placeholder="Finish lab report"
+              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+            />
+
+            <label className="mt-3 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+              Description (optional)
+            </label>
+            <textarea
+              value={mDescription}
+              onChange={(e) => setMDescription(e.target.value)}
+              rows={2}
+              placeholder="Add a short note…"
+              className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+            />
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                  Tag
+                </label>
+                <input
+                  value={mTag}
+                  onChange={(e) => setMTag(e.target.value)}
+                  placeholder="COMP4610"
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                  Priority
+                </label>
+                <select
+                  value={mPriority}
+                  onChange={(e) =>
+                    setMPriority(e.target.value as Priority)
+                  }
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-2 py-2 text-sm text-slate-700"
+                >
+                  <option value="high">High</option>
+                  <option value="medium">Medium</option>
+                  <option value="low">Low</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-3 grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                  Date
+                </label>
+                <input
+                  type="date"
+                  value={mDate}
+                  onChange={(e) => setMDate(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                  Time
+                </label>
+                <input
+                  type="time"
+                  value={mTime}
+                  onChange={(e) => setMTime(e.target.value)}
+                  className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+                />
+              </div>
+            </div>
+
+            {mError && (
+              <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600 ring-1 ring-rose-100">
+                {mError}
+              </p>
+            )}
+
+            <div className="mt-4 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={closeModal}
+                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={create.isPending || !mName.trim()}
+                className="rounded-full bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-sky-300"
+              >
+                {create.isPending ? "Adding…" : "Create task"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
     </SfShell>
   );
 }
@@ -406,17 +561,27 @@ function BannerCard({
   const style = coverStyles[cover];
   const tag = card.tag ?? "Task";
 
-  // Two-state UI: anything that isn't done is treated as in-progress, so the
-  // button alternates between Complete (active) and Reopen (finished).
+  // Three-state UI: pending → "Start" (begin), in_progress → "Complete",
+  // done → "Reopen". This matches the lifecycle the rest of the app uses.
   const action =
     card.state === "done"
       ? { label: "Reopen", color: "bg-white/15 hover:bg-white/30" }
-      : {
-          label: "Complete",
-          color: "bg-emerald-500/80 hover:bg-emerald-500",
-        };
+      : card.state === "pending"
+        ? {
+            label: "Start",
+            color: "bg-sky-500/80 hover:bg-sky-500",
+          }
+        : {
+            label: "Complete",
+            color: "bg-emerald-500/80 hover:bg-emerald-500",
+          };
 
-  const stateBadge = card.state === "done" ? "Completed" : "In progress";
+  const stateBadge =
+    card.state === "done"
+      ? "Completed"
+      : card.state === "pending"
+        ? "Pending"
+        : "In progress";
 
   return (
     <li

@@ -79,7 +79,7 @@ type Store = {
  * absolute datetimes to dayOffset). The store will discard old seed data
  * and re-populate the next time `list()` is called.
  */
-const SEED_VERSION = 2;
+const SEED_VERSION = 3;
 
 const globalForStore = globalThis as unknown as { __sfStore?: Store };
 
@@ -145,9 +145,8 @@ function fromSample(s: SampleCard): Card {
     recommendReason: s.recommendReason,
     tag: s.tag,
     cover: s.cover,
-    state: "in_progress",
+    state: "pending",
     done: false,
-    startedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
   };
 }
@@ -197,7 +196,7 @@ export const cardStore = {
   },
 
   create(input: CreateCardInput): Card {
-    // New cards skip "pending" entirely — they start ready-to-go.
+    // New cards start as "pending" — the user explicitly starts them later.
     const card: Card = {
       id: nextId(),
       type: input.type,
@@ -208,9 +207,8 @@ export const cardStore = {
       recommendReason: input.recommendReason,
       tag: input.tag,
       cover: input.cover,
-      state: "in_progress",
+      state: "pending",
       done: false,
-      startedAt: new Date().toISOString(),
       createdAt: new Date().toISOString(),
     };
     store.cards.push(card);

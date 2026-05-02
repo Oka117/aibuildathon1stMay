@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState, type ReactNode } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { api } from "~/trpc/react";
 
 type NavItem = {
@@ -109,58 +109,188 @@ const navItems: NavItem[] = [
   },
 ];
 
+type GlobalSearchHit =
+  | {
+      kind: "task";
+      id: string;
+      title: string;
+      subtitle: string;
+      href: string;
+    }
+  | {
+      kind: "page";
+      id: string;
+      title: string;
+      subtitle: string;
+      href: string;
+    };
+
+const STATIC_PAGE_HITS: GlobalSearchHit[] = [
+  {
+    kind: "page",
+    id: "page-home",
+    title: "Home",
+    subtitle: "Dashboard · today's schedule",
+    href: "/",
+  },
+  {
+    kind: "page",
+    id: "page-timetable",
+    title: "Timetable",
+    subtitle: "Weekly calendar · lectures",
+    href: "/timetable",
+  },
+  {
+    kind: "page",
+    id: "page-tasks",
+    title: "Tasks",
+    subtitle: "All tasks · pending / in progress / done",
+    href: "/tasks",
+  },
+  {
+    kind: "page",
+    id: "page-planner",
+    title: "Planner",
+    subtitle: "AI plan generator · suggestions",
+    href: "/planner",
+  },
+  {
+    kind: "page",
+    id: "page-focus",
+    title: "Focus",
+    subtitle: "Pomodoro timer · deep work",
+    href: "/focus",
+  },
+];
+
 export function SfShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const utils = api.useUtils();
+  const router = useRouter();
 
-  // Quick-add modal state. The "+ Quick add" button in the header opens this.
-  const [quickOpen, setQuickOpen] = useState(false);
-  const [quickName, setQuickName] = useState("");
-  const [quickDescription, setQuickDescription] = useState("");
-  const [quickPriority, setQuickPriority] = useState<"high" | "medium" | "low">(
-    "medium",
-  );
-  const [quickError, setQuickError] = useState<string | null>(null);
+  // Global search state — drives the header search input + results dropdown.
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
+  const searchRef = useRef<HTMLDivElement | null>(null);
 
-  const createCard = api.card.create.useMutation({
-    onSuccess: () => utils.card.list.invalidate(),
-  });
+  // Close the search dropdown when clicking outside the search box.
+  useEffect(() => {
+    if (!searchOpen) return;
+    function onPointer(e: MouseEvent) {
+      if (!searchRef.current) return;
+      if (!searchRef.current.contains(e.target as Node)) {
+        setSearchOpen(false);
+      }
+    }
+    window.addEventListener("mousedown", onPointer);
+    return () => window.removeEventListener("mousedown", onPointer);
+  }, [searchOpen]);
 
-  function resetQuick() {
-    setQuickName("");
-    setQuickDescription("");
-    setQuickPriority("medium");
-    setQuickError(null);
-  }
+  // Browser-notification state. We mirror Notification.permission so the bell
+  // icon shows whether notifications are granted, denied, or still pending.
+  const [notifPermission, setNotifPermission] = useState<
+    "granted" | "denied" | "default" | "unsupported"
+  >("default");
 
-  function openQuick() {
-    resetQuick();
-    setQuickOpen(true);
-  }
-
-  function closeQuick() {
-    setQuickOpen(false);
-    resetQuick();
-  }
-
-  function submitQuick(e: React.FormEvent) {
-    e.preventDefault();
-    if (!quickName.trim()) {
-      setQuickError("Name is required.");
+  // Read current permission once on mount (Notification is window-only).
+  useEffect(() => {
+    if (typeof window === "undefined" || !("Notification" in window)) {
+      setNotifPermission("unsupported");
       return;
     }
-    createCard.mutate(
-      {
-        type: "todo",
-        name: quickName.trim(),
-        description: quickDescription.trim() || undefined,
-        priority: quickPriority,
-      },
-      {
-        onSuccess: () => closeQuick(),
-        onError: (err) => setQuickError(err.message),
-      },
+    setNotifPermission(
+      window.Notification.permission as "granted" | "denied" | "default",
     );
+  }, []);
+
+  // Pull active (non-done) cards once so the bell can preview a count of
+  // upcoming items. Uses the same query as every other surface.
+  const cardsQuery = api.card.list.useQuery();
+  const cards = cardsQuery.data ?? [];
+  const upcomingCount = cards.filter((c) => c.state !== "done").length;
+
+  // Compute matching tasks + pages for the global search box.
+  const searchResults = useMemo<GlobalSearchHit[]>(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return [];
+    const taskHits: GlobalSearchHit[] = cards
+      .filter((c) => {
+        const hay = `${c.name} ${c.description ?? ""} ${c.tag ?? ""}`.toLowerCase();
+        return hay.includes(q);
+      })
+      .slice(0, 6)
+      .map((c) => ({
+        kind: "task" as const,
+        id: c.id,
+        title: c.name,
+        subtitle:
+          (c.tag ? `${c.tag} · ` : "") +
+          (c.state === "done"
+            ? "Completed"
+            : c.state === "in_progress"
+              ? "In progress"
+              : "Pending"),
+        href: "/tasks",
+      }));
+    const pageHits = STATIC_PAGE_HITS.filter(
+      (p) =>
+        p.title.toLowerCase().includes(q) ||
+        p.subtitle.toLowerCase().includes(q),
+    );
+    return [...taskHits, ...pageHits];
+  }, [cards, searchQuery]);
+
+  function handleSearchSelect(hit: GlobalSearchHit) {
+    setSearchOpen(false);
+    setSearchQuery("");
+    router.push(hit.href);
+  }
+
+  function handleSearchSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (searchResults.length > 0) {
+      handleSearchSelect(searchResults[0]!);
+    } else if (searchQuery.trim()) {
+      // Fall through: send the user to /tasks with no match.
+      setSearchOpen(false);
+      router.push("/tasks");
+    }
+  }
+
+  async function handleNotificationsClick() {
+    if (
+      typeof window === "undefined" ||
+      !("Notification" in window)
+    ) {
+      alert("This browser does not support desktop notifications.");
+      return;
+    }
+    // Already granted: show a sample notification summarizing upcoming work.
+    if (window.Notification.permission === "granted") {
+      const body =
+        upcomingCount === 0
+          ? "All caught up — nothing pending."
+          : `You have ${upcomingCount} active task${upcomingCount === 1 ? "" : "s"}.`;
+      new window.Notification("StudyFlow", {
+        body,
+        icon: "/favicon.ico",
+      });
+      return;
+    }
+    if (window.Notification.permission === "denied") {
+      alert(
+        "Notifications are blocked. Enable them in your browser site settings to receive reminders.",
+      );
+      return;
+    }
+    // Otherwise: ask for permission.
+    const result = await window.Notification.requestPermission();
+    setNotifPermission(result as "granted" | "denied" | "default");
+    if (result === "granted") {
+      new window.Notification("StudyFlow notifications enabled", {
+        body: "We'll remind you about upcoming tasks here.",
+        icon: "/favicon.ico",
+      });
+    }
   }
 
   return (
@@ -246,32 +376,116 @@ export function SfShell({ children }: { children: ReactNode }) {
               <span className="text-slate-900">Study</span>
               <span className="text-sky-600">Flow</span>
             </div>
-            <div className="hidden items-center gap-2 rounded-xl bg-white/70 px-3 py-2 ring-1 ring-white/60 md:flex md:w-[420px]">
-              <svg
-                className="h-4 w-4 text-slate-400"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
+            <div
+              ref={searchRef}
+              className="relative hidden md:block md:w-[420px]"
+            >
+              <form
+                onSubmit={handleSearchSubmit}
+                className="flex items-center gap-2 rounded-xl bg-white/70 px-3 py-2 ring-1 ring-white/60"
               >
-                <circle cx="11" cy="11" r="7" />
-                <path d="m21 21-4.3-4.3" />
-              </svg>
-              <input
-                placeholder="Search tasks, lectures, deadlines…"
-                className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
-              />
-              <span className="hidden rounded border border-slate-200 px-1.5 text-[10px] font-medium text-slate-400 md:inline">
-                ⌘K
-              </span>
+                <svg
+                  className="h-4 w-4 text-slate-400"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="11" cy="11" r="7" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+                <input
+                  value={searchQuery}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setSearchOpen(true);
+                  }}
+                  onFocus={() => setSearchOpen(true)}
+                  placeholder="Search tasks, lectures, deadlines…"
+                  className="w-full bg-transparent text-sm text-slate-700 outline-none placeholder:text-slate-400"
+                />
+                {searchQuery && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchQuery("");
+                      setSearchOpen(false);
+                    }}
+                    className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                    aria-label="Clear search"
+                  >
+                    <svg
+                      className="h-3.5 w-3.5"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    >
+                      <path d="M18 6 6 18M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </form>
+              {searchOpen && searchQuery.trim() && (
+                <div className="absolute top-full left-0 right-0 z-20 mt-1 max-h-80 overflow-auto rounded-xl bg-white p-1 shadow-lg ring-1 ring-slate-200">
+                  {searchResults.length === 0 ? (
+                    <p className="px-3 py-4 text-center text-xs text-slate-500">
+                      No matches for &ldquo;{searchQuery}&rdquo;.
+                    </p>
+                  ) : (
+                    <ul className="text-sm">
+                      {searchResults.map((hit) => (
+                        <li key={`${hit.kind}-${hit.id}`}>
+                          <button
+                            type="button"
+                            onClick={() => handleSearchSelect(hit)}
+                            className="flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left hover:bg-slate-50"
+                          >
+                            <span
+                              className={`mt-1 inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${
+                                hit.kind === "task"
+                                  ? "bg-sky-50 text-sky-700"
+                                  : "bg-slate-100 text-slate-600"
+                              }`}
+                            >
+                              {hit.kind === "task" ? "Task" : "Page"}
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-semibold text-slate-900">
+                                {hit.title}
+                              </span>
+                              <span className="block truncate text-xs text-slate-500">
+                                {hit.subtitle}
+                              </span>
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           </div>
           <div className="flex items-center gap-3">
             <button
+              type="button"
+              onClick={handleNotificationsClick}
               className="relative grid h-9 w-9 place-items-center rounded-full bg-white/70 text-slate-600 ring-1 ring-white/60 transition hover:bg-white"
               aria-label="Notifications"
+              title={
+                notifPermission === "granted"
+                  ? `Notifications on — ${upcomingCount} active task${upcomingCount === 1 ? "" : "s"}`
+                  : notifPermission === "denied"
+                    ? "Notifications blocked — enable in browser settings"
+                    : notifPermission === "unsupported"
+                      ? "Notifications not supported in this browser"
+                      : "Click to enable browser notifications"
+              }
             >
               <svg
                 className="h-4 w-4"
@@ -285,14 +499,15 @@ export function SfShell({ children }: { children: ReactNode }) {
                 <path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8" />
                 <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
               </svg>
-              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-rose-500" />
-            </button>
-            <button
-              type="button"
-              onClick={openQuick}
-              className="hidden rounded-full bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700 md:inline-flex"
-            >
-              + Quick add
+              {notifPermission === "granted" && upcomingCount > 0 && (
+                <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-rose-500" />
+              )}
+              {notifPermission === "default" && (
+                <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-amber-400" />
+              )}
+              {notifPermission === "denied" && (
+                <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-slate-400" />
+              )}
             </button>
             <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-sky-400 to-sky-600 text-sm font-semibold text-white md:hidden">
               A
@@ -330,115 +545,6 @@ export function SfShell({ children }: { children: ReactNode }) {
         </nav>
       </div>
 
-      {/* Quick-add modal — opens from the header's "+ Quick add" button. */}
-      {quickOpen && (
-        <div
-          className="fixed inset-0 z-30 grid place-items-center bg-slate-900/30 p-4 backdrop-blur-sm"
-          onClick={closeQuick}
-        >
-          <form
-            onSubmit={submitQuick}
-            onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-md rounded-2xl bg-white p-5 shadow-xl ring-1 ring-slate-200"
-          >
-            <div className="flex items-start justify-between">
-              <div>
-                <h3 className="text-base font-semibold text-slate-900">
-                  Quick add
-                </h3>
-                <p className="mt-0.5 text-xs text-slate-500">
-                  Create a task from anywhere — saved to the same store as
-                  Tasks and the Planner.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={closeQuick}
-                className="rounded-md p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
-                aria-label="Close"
-              >
-                <svg
-                  className="h-4 w-4"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="2"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <path d="M18 6 6 18M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-
-            <label className="mt-4 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
-              Name
-            </label>
-            <input
-              autoFocus
-              value={quickName}
-              onChange={(e) => setQuickName(e.target.value)}
-              required
-              placeholder="Draft Lab Report intro"
-              className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-            />
-
-            <label className="mt-3 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
-              Description (optional)
-            </label>
-            <textarea
-              value={quickDescription}
-              onChange={(e) => setQuickDescription(e.target.value)}
-              rows={2}
-              placeholder="A short note to remind future-you what this is."
-              className="mt-1 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
-            />
-
-            <label className="mt-3 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
-              Priority
-            </label>
-            <div className="mt-1 inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
-              {(["high", "medium", "low"] as const).map((p) => (
-                <button
-                  key={p}
-                  type="button"
-                  onClick={() => setQuickPriority(p)}
-                  className={`rounded-lg px-3 py-1.5 capitalize transition ${
-                    quickPriority === p
-                      ? "bg-white text-slate-900 shadow-sm"
-                      : "text-slate-500"
-                  }`}
-                >
-                  {p}
-                </button>
-              ))}
-            </div>
-
-            {quickError && (
-              <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600 ring-1 ring-rose-100">
-                {quickError}
-              </p>
-            )}
-
-            <div className="mt-4 flex items-center justify-end gap-2">
-              <button
-                type="button"
-                onClick={closeQuick}
-                className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={createCard.isPending || !quickName.trim()}
-                className="rounded-full bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:bg-sky-700 disabled:cursor-not-allowed disabled:bg-sky-300"
-              >
-                {createCard.isPending ? "Adding…" : "Add task"}
-              </button>
-            </div>
-          </form>
-        </div>
-      )}
     </div>
   );
 }
