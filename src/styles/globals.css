@@ -1,0 +1,37 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+
+  /* StudyFlow palette */
+  --color-sf-bg: #f5f7fb;
+  --color-sf-card: #ffffff;
+  --color-sf-ink: #0f172a;
+  --color-sf-muted: #64748b;
+  --color-sf-line: #e5e7eb;
+  --color-sf-primary: #4f46e5;
+  --color-sf-primary-soft: #eef2ff;
+  --color-sf-accent: #10b981;
+  --color-sf-accent-soft: #ecfdf5;
+  --color-sf-warn: #f59e0b;
+  --color-sf-warn-soft: #fffbeb;
+  --color-sf-danger: #ef4444;
+  --color-sf-danger-soft: #fef2f2;
+}
+
+html,
+body {
+  background: var(--color-sf-bg);
+  color: var(--color-sf-ink);
+}
+
+/* Subtle scrollbar inside the phone-frame timetable */
+.sf-scroll::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.sf-scroll::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 9999px;
+}
