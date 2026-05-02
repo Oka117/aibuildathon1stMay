@@ -205,8 +205,11 @@ export function SfShell({ children }: { children: ReactNode }) {
   // Pull active (non-done) cards once so the bell can preview a count of
   // upcoming items. Uses the same query as every other surface.
   const cardsQuery = api.card.list.useQuery();
-  const cards = cardsQuery.data ?? [];
-  const upcomingCount = cards.filter((c) => c.state !== "done").length;
+  const cards = useMemo(() => cardsQuery.data ?? [], [cardsQuery.data]);
+  const upcomingCount = useMemo(
+    () => cards.filter((c) => c.state !== "done").length,
+    [cards],
+  );
 
   // Compute matching tasks + pages for the global search box.
   const searchResults = useMemo<GlobalSearchHit[]>(() => {

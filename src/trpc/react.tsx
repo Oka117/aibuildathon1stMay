@@ -1,7 +1,7 @@
 "use client";
 
 import { QueryClientProvider, type QueryClient } from "@tanstack/react-query";
-import { httpBatchStreamLink, loggerLink } from "@trpc/client";
+import { httpBatchLink, loggerLink } from "@trpc/client";
 import { createTRPCReact } from "@trpc/react-query";
 import { type inferRouterInputs, type inferRouterOutputs } from "@trpc/server";
 import { useState } from "react";
@@ -45,11 +45,24 @@ export function TRPCReactProvider(props: { children: React.ReactNode }) {
     api.createClient({
       links: [
         loggerLink({
-          enabled: (op) =>
-            process.env.NODE_ENV === "development" ||
-            (op.direction === "down" && op.result instanceof Error),
+          // Only log real downstream errors. Skip aborted/cancelled requests
+          // (these surface during dev HMR with an empty error object and just
+          // create noise in the console).
+          enabled: (op) => {
+            if (op.direction !== "down") return false;
+            if (!(op.result instanceof Error)) return false;
+            const msg = op.result.message ?? "";
+            if (
+              msg === "" ||
+              msg.toLowerCase().includes("aborted") ||
+              msg.toLowerCase().includes("the operation was aborted")
+            ) {
+              return false;
+            }
+            return true;
+          },
         }),
-        httpBatchStreamLink({
+        httpBatchLink({
           transformer: SuperJSON,
           url: getBaseUrl() + "/api/trpc",
           headers: () => {

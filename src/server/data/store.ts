@@ -177,7 +177,16 @@ export const cardStore = {
   seedIfEmpty,
 
   list(): Card[] {
-    seedIfEmpty();
+    try {
+      seedIfEmpty();
+    } catch (err) {
+      // Don't let a corrupted seed prevent the page from rendering — log,
+      // wipe, and try once more so the user gets an empty (but functional)
+      // store instead of an opaque 500.
+      console.error("[cardStore] seed failed, resetting:", err);
+      store.cards = [];
+      store.seeded = true;
+    }
     return [...store.cards].sort((a, b) => {
       const ra = stateRank(a.state);
       const rb = stateRank(b.state);
