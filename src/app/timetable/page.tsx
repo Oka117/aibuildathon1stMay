@@ -1,4 +1,8 @@
+"use client";
+
+import { useMemo } from "react";
 import { SfShell } from "~/app/_components/sf-shell";
+import { api } from "~/trpc/react";
 
 type Block = {
   day: number; // 0..6 -> Mon..Sun
@@ -8,6 +12,8 @@ type Block = {
   type: string;
   room: string;
   color: string;
+  /** Set when this block came from the calendar store and can be removed. */
+  eventId?: string;
 };
 
 const days = [
@@ -22,7 +28,7 @@ const days = [
 
 const hours = Array.from({ length: 13 }, (_, i) => 8 + i); // 8 AM .. 8 PM
 
-const blocks: Block[] = [
+const fixedBlocks: Block[] = [
   {
     day: 1,
     start: 13,
@@ -100,6 +106,27 @@ const blocks: Block[] = [
 const HOUR_HEIGHT = 64; // px
 
 export default function TimetablePage() {
+  const utils = api.useUtils();
+  const eventsQuery = api.calendar.list.useQuery();
+  const removeEvent = api.calendar.remove.useMutation({
+    onSuccess: () => utils.calendar.list.invalidate(),
+  });
+
+  // Merge fixed class blocks with user-accepted suggestions from the planner.
+  const allBlocks: Block[] = useMemo(() => {
+    const fromStore: Block[] = (eventsQuery.data ?? []).map((e) => ({
+      day: e.day,
+      start: e.start,
+      duration: e.duration,
+      title: e.title,
+      type: "AI suggestion",
+      room: e.description || "Added from Planner",
+      color: "bg-violet-100 text-violet-700 border-violet-300",
+      eventId: e.id,
+    }));
+    return [...fixedBlocks, ...fromStore];
+  }, [eventsQuery.data]);
+
   return (
     <SfShell>
       <section className="mb-5 flex flex-col items-start justify-between gap-3 sm:flex-row sm:items-center">
@@ -195,15 +222,15 @@ export default function TimetablePage() {
                   />
                 ))}
 
-                {blocks
+                {allBlocks
                   .filter((b) => b.day === dayIndex)
                   .map((b, i) => {
                     const top = (b.start - hours[0]!) * HOUR_HEIGHT + 2;
                     const height = b.duration * HOUR_HEIGHT - 4;
                     return (
                       <div
-                        key={`${b.title}-${i}`}
-                        className={`absolute right-1.5 left-1.5 overflow-hidden rounded-lg border px-2 py-1.5 text-[11px] leading-tight shadow-sm ${b.color}`}
+                        key={`${b.title}-${i}-${b.eventId ?? "fixed"}`}
+                        className={`group absolute right-1.5 left-1.5 overflow-hidden rounded-lg border px-2 py-1.5 text-[11px] leading-tight shadow-sm ${b.color}`}
                         style={{ top, height }}
                       >
                         <p className="truncate text-xs font-semibold">
@@ -213,6 +240,28 @@ export default function TimetablePage() {
                         <p className="truncate text-[10px] opacity-70">
                           {b.room}
                         </p>
+                        {b.eventId && (
+                          <button
+                            onClick={() =>
+                              removeEvent.mutate({ id: b.eventId! })
+                            }
+                            className="absolute top-1 right-1 hidden rounded-md bg-white/80 p-0.5 text-slate-500 hover:bg-white hover:text-rose-500 group-hover:block"
+                            aria-label="remove from calendar"
+                            title="Remove"
+                          >
+                            <svg
+                              className="h-3 w-3"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                            >
+                              <path d="M18 6 6 18M6 6l12 12" />
+                            </svg>
+                          </button>
+                        )}
                       </div>
                     );
                   })}
@@ -222,11 +271,12 @@ export default function TimetablePage() {
         </div>
       </div>
 
-      <div className="mt-5 grid grid-cols-2 gap-3 text-xs sm:grid-cols-4">
+      <div className="mt-5 grid grid-cols-2 gap-3 text-xs sm:grid-cols-5">
         <Legend color="bg-indigo-300" label="COMP4610 — AI" />
         <Legend color="bg-rose-300" label="COMP3242 — Studio" />
         <Legend color="bg-sky-300" label="COMP2620 — Logic" />
         <Legend color="bg-emerald-300" label="Tutorials" />
+        <Legend color="bg-violet-300" label="From Planner" />
       </div>
     </SfShell>
   );

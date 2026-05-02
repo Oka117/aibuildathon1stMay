@@ -18,15 +18,29 @@
   --color-sf-warn-soft: #fffbeb;
   --color-sf-danger: #ef4444;
   --color-sf-danger-soft: #fef2f2;
+
+  /* Pomotodo-style sky gradient stops, applied app-wide. */
+  --color-sf-sky-1: #9ad5f0;
+  --color-sf-sky-2: #bee3f3;
+  --color-sf-sky-3: #e2f2fa;
 }
 
 html,
 body {
-  background: var(--color-sf-bg);
+  /* App-wide pomotodo-style sky background. The gradient is fixed so
+     scrolling content slides over it, giving every page the same feel. */
+  background: linear-gradient(
+    180deg,
+    var(--color-sf-sky-1) 0%,
+    var(--color-sf-sky-2) 35%,
+    var(--color-sf-sky-3) 100%
+  );
+  background-attachment: fixed;
   color: var(--color-sf-ink);
+  min-height: 100vh;
 }
 
-/* Subtle scrollbar inside the phone-frame timetable */
+/* Subtle scrollbar used by the timetable's horizontal scroll area. */
 .sf-scroll::-webkit-scrollbar {
   width: 6px;
   height: 6px;

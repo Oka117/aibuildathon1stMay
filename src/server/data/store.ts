@@ -5,9 +5,18 @@
  * survives Next.js HMR in dev (same trick used by `src/server/db.ts`). Replace
  * with Prisma later by swapping the function bodies for `db.card.*` calls —
  * the public surface is intentionally identical to a typical CRUD repo.
+ *
+ * On first access, `cardStore.list()` (and the explicit `seedIfEmpty()`)
+ * populates the store with `sampleCards` so the UI has realistic CS
+ * coursework data on first paint without any user input.
  */
 
-import type { Priority } from "~/server/data/sample-data";
+import {
+  sampleCards,
+  type CoverKey,
+  type Priority,
+  type SampleCard,
+} from "~/server/data/sample-data";
 
 export type CardType = "todo" | "event";
 
@@ -19,6 +28,10 @@ export type Card = {
   datetime?: string; // ISO-like "YYYY-MM-DD HH:MM"
   priority?: Priority;
   recommendReason?: string;
+  /** Course code or category tag — e.g. "COMP4610", "Wellbeing". */
+  tag?: string;
+  /** Cover style key, used by the pomotodo-style Tasks list. */
+  cover?: CoverKey;
   done: boolean;
   createdAt: string;
 };
@@ -30,26 +43,64 @@ export type CreateCardInput = {
   datetime?: string;
   priority?: Priority;
   recommendReason?: string;
+  tag?: string;
+  cover?: CoverKey;
 };
 
 type Store = {
   cards: Card[];
   counter: number;
+  seeded: boolean;
 };
 
 const globalForStore = globalThis as unknown as { __sfStore?: Store };
 
 const store: Store =
   globalForStore.__sfStore ??
-  (globalForStore.__sfStore = { cards: [], counter: 0 });
+  (globalForStore.__sfStore = { cards: [], counter: 0, seeded: false });
 
 function nextId() {
   store.counter += 1;
   return `c_${store.counter}_${Date.now().toString(36)}`;
 }
 
+/**
+ * Convert a SampleCard from sample-data.ts into a fully-formed Card.
+ * We still go through nextId / new Date so seeded cards look identical
+ * to user-created ones.
+ */
+function fromSample(s: SampleCard): Card {
+  return {
+    id: nextId(),
+    type: "event",
+    name: s.name,
+    description: s.description,
+    datetime: s.datetime,
+    priority: s.priority,
+    recommendReason: s.recommendReason,
+    tag: s.tag,
+    cover: s.cover,
+    done: false,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+function seedIfEmpty() {
+  if (store.seeded) return;
+  store.seeded = true;
+  if (store.cards.length === 0) {
+    for (const s of sampleCards) {
+      store.cards.push(fromSample(s));
+    }
+  }
+}
+
 export const cardStore = {
+  /** Force-seed the store. Called by routers that want guaranteed data. */
+  seedIfEmpty,
+
   list(): Card[] {
+    seedIfEmpty();
     // Newest first, but undone before done
     return [...store.cards].sort((a, b) => {
       if (a.done !== b.done) return a.done ? 1 : -1;
@@ -70,6 +121,8 @@ export const cardStore = {
       datetime: input.datetime,
       priority: input.priority,
       recommendReason: input.recommendReason,
+      tag: input.tag,
+      cover: input.cover,
       done: false,
       createdAt: new Date().toISOString(),
     };
@@ -102,5 +155,13 @@ export const cardStore = {
 
   clear(): void {
     store.cards = [];
+    store.seeded = true; // don't auto-reseed after a deliberate clear
+  },
+
+  /** Reset to seeded sample data (useful for the "demo reset" button). */
+  reset(): void {
+    store.cards = [];
+    store.seeded = false;
+    seedIfEmpty();
   },
 };

@@ -5,6 +5,15 @@ import { cardStore } from "~/server/data/store";
 
 const PriorityEnum = z.enum(["high", "medium", "low"]);
 const TypeEnum = z.enum(["todo", "event"]);
+const CoverEnum = z.enum([
+  "skyline",
+  "mountain",
+  "campus",
+  "night",
+  "library",
+  "ocean",
+  "forest",
+]);
 
 const CreateInput = z.object({
   type: TypeEnum,
@@ -13,6 +22,8 @@ const CreateInput = z.object({
   datetime: z.string().max(40).optional(),
   priority: PriorityEnum.optional(),
   recommendReason: z.string().max(500).optional(),
+  tag: z.string().max(40).optional(),
+  cover: CoverEnum.optional(),
 });
 
 const IdInput = z.object({ id: z.string().min(1) });
@@ -23,6 +34,8 @@ const UpdateInput = IdInput.extend({
   datetime: z.string().max(40).optional(),
   priority: PriorityEnum.optional(),
   recommendReason: z.string().max(500).optional(),
+  tag: z.string().max(40).optional(),
+  cover: CoverEnum.optional(),
   done: z.boolean().optional(),
 });
 
@@ -53,6 +66,11 @@ export const cardRouter = createTRPCRouter({
 
   clear: publicProcedure.mutation(() => {
     cardStore.clear();
+    return { ok: true };
+  }),
+
+  reset: publicProcedure.mutation(() => {
+    cardStore.reset();
     return { ok: true };
   }),
 });

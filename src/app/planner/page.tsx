@@ -5,7 +5,6 @@ import { SfShell } from "~/app/_components/sf-shell";
 import { api } from "~/trpc/react";
 
 type Priority = "high" | "medium" | "low";
-type CardType = "todo" | "event";
 
 const priorityChip: Record<Priority, string> = {
   high: "bg-red-50 text-red-600 ring-red-100",
@@ -13,17 +12,28 @@ const priorityChip: Record<Priority, string> = {
   low: "bg-emerald-50 text-emerald-700 ring-emerald-100",
 };
 
-const typeChip: Record<CardType, string> = {
-  todo: "bg-indigo-50 text-indigo-600 ring-indigo-100",
-  event: "bg-rose-50 text-rose-600 ring-rose-100",
-};
-
 type SuggestionTask = {
   name: string;
   description: string;
-  datetime: string;
   recommendReason: string;
   priority: Priority;
+  suggestedTime: string;
+  day: number;
+  start: number;
+  duration: number;
+};
+
+/**
+ * A "draft" event lives only in client state until the user clicks Save.
+ * Delete throws it away without ever hitting the server.
+ *
+ * Cards created from this page are always type "event" (todo creation was
+ * removed from this form per the latest design).
+ */
+type DraftCard = {
+  draftId: string;
+  name: string;
+  description: string;
 };
 
 /**
@@ -38,13 +48,19 @@ function csvField(value: string): string {
 }
 
 function tasksToCsv(tasks: SuggestionTask[]): string {
-  const header = ["Name", "Description", "Datetime", "Recommend Reason", "Priority"];
+  const header = [
+    "Name",
+    "Description",
+    "Recommend Reason",
+    "Priority",
+    "Suggested Time",
+  ];
   const rows = tasks.map((t) => [
     t.name,
     t.description,
-    t.datetime,
     t.recommendReason,
     t.priority,
+    t.suggestedTime,
   ]);
   const lines = [header, ...rows].map((r) => r.map(csvField).join(","));
   // Prefix BOM so Excel opens UTF-8 cleanly.
@@ -63,21 +79,26 @@ function downloadCsv(filename: string, csv: string) {
   URL.revokeObjectURL(url);
 }
 
+function newDraftId() {
+  return `d_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+}
+
 export default function PlannerPage() {
   const utils = api.useUtils();
 
-  // ── AI side state ──────────────────────────────────────────────────────────
-  const [context, setContext] = useState(
-    "I have a Chemistry lab report due Friday and a Calculus problem set Monday. " +
-      "I'm feeling a bit overwhelmed and didn't sleep well last night.",
-  );
+  // ── Talk-to-planner state ──────────────────────────────────────────────────
+  const [context, setContext] = useState("");
   const [count, setCount] = useState(5);
   const generate = api.planner.generate.useMutation();
 
-  // ── Manual create form state ───────────────────────────────────────────────
-  const [type, setType] = useState<CardType>("todo");
+  // ── Draft cards (client-only until "Save") ─────────────────────────────────
+  const [drafts, setDrafts] = useState<DraftCard[]>([]);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+
+  // Tracks which suggestions have already been pushed to the calendar so we
+  // can disable the "Add to calendar" button after a successful add.
+  const [addedToCal, setAddedToCal] = useState<Record<string, boolean>>({});
 
   // ── Server data ────────────────────────────────────────────────────────────
   const cardsQuery = api.card.list.useQuery();
@@ -90,11 +111,11 @@ export default function PlannerPage() {
   const remove = api.card.remove.useMutation({
     onSuccess: () => utils.card.list.invalidate(),
   });
+  const addToCalendar = api.calendar.add.useMutation({
+    onSuccess: () => utils.calendar.list.invalidate(),
+  });
 
-  const cards = useMemo(
-    () => cardsQuery.data ?? [],
-    [cardsQuery.data],
-  );
+  const cards = useMemo(() => cardsQuery.data ?? [], [cardsQuery.data]);
   const undone = useMemo(() => cards.filter((c) => !c.done).length, [cards]);
 
   const suggestions: SuggestionTask[] = useMemo(
@@ -102,20 +123,52 @@ export default function PlannerPage() {
     [generate.data],
   );
 
-  function submitManualCard(e: React.FormEvent) {
+  function addDraft(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) return;
+    setDrafts((prev) => [
+      ...prev,
+      {
+        draftId: newDraftId(),
+        name: name.trim(),
+        description: description.trim(),
+      },
+    ]);
+    setName("");
+    setDescription("");
+  }
+
+  function saveDraft(d: DraftCard) {
     create.mutate(
       {
-        type,
-        name: name.trim(),
-        description: description.trim() || undefined,
+        type: "event",
+        name: d.name,
+        description: d.description || undefined,
       },
       {
-        onSuccess: () => {
-          setName("");
-          setDescription("");
-        },
+        onSuccess: () =>
+          setDrafts((prev) => prev.filter((x) => x.draftId !== d.draftId)),
+      },
+    );
+  }
+
+  function deleteDraft(draftId: string) {
+    setDrafts((prev) => prev.filter((x) => x.draftId !== draftId));
+  }
+
+  function handleAddToCalendar(t: SuggestionTask, key: string) {
+    addToCalendar.mutate(
+      {
+        title: t.name,
+        description: t.description,
+        day: t.day,
+        start: t.start,
+        duration: t.duration,
+        source: "suggestion",
+      },
+      {
+        onSuccess: () =>
+          setAddedToCal((prev) => ({ ...prev, [key]: true })),
       },
     );
   }
@@ -125,6 +178,9 @@ export default function PlannerPage() {
     const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
     downloadCsv(`studyflow-plan-${stamp}.csv`, tasksToCsv(suggestions));
   }
+
+  const canGenerate =
+    context.trim().length > 0 && undone > 0 && !generate.isPending;
 
   return (
     <SfShell>
@@ -143,13 +199,13 @@ export default function PlannerPage() {
             {undone} active card{undone === 1 ? "" : "s"}
           </span>
           <span className="rounded-full bg-white px-2.5 py-1 ring-1 ring-slate-200">
-            {cards.length} total
+            {drafts.length} unsaved draft{drafts.length === 1 ? "" : "s"}
           </span>
         </div>
       </section>
 
       <section className="grid grid-cols-1 gap-5 lg:grid-cols-12">
-        {/* Left — AI conversation + suggestions */}
+        {/* Left — Talk + Suggestions */}
         <div className="space-y-5 lg:col-span-7">
           <div className="rounded-2xl bg-gradient-to-br from-indigo-50 via-white to-white p-5 shadow-sm ring-1 ring-slate-100">
             <p className="text-[10px] font-semibold tracking-[0.18em] text-indigo-500 uppercase">
@@ -162,7 +218,7 @@ export default function PlannerPage() {
               value={context}
               onChange={(e) => setContext(e.target.value)}
               rows={4}
-              placeholder="e.g. I have a lab report due Friday, feeling tired, want to start the week strong…"
+              placeholder="Tell us what you recent plan…  e.g. lab report due Friday, feeling tired, want to start the week strong."
               className="mt-3 w-full resize-none rounded-xl border border-slate-200 bg-white px-3 py-2.5 text-sm text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
             />
             <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
@@ -180,40 +236,35 @@ export default function PlannerPage() {
                   ))}
                 </select>
               </label>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() =>
-                    setContext(
-                      "Lab report due Friday, problem set Monday, feeling overwhelmed.",
-                    )
-                  }
-                  className="rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-600 ring-1 ring-slate-200 hover:bg-slate-50"
-                >
-                  Reset prompt
-                </button>
-                <button
-                  type="button"
-                  disabled={generate.isPending || !context.trim()}
-                  onClick={() =>
-                    generate.mutate({ context: context.trim(), count })
-                  }
-                  className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
-                >
-                  {generate.isPending ? (
-                    <Spinner />
-                  ) : (
-                    <svg
-                      className="h-3.5 w-3.5"
-                      viewBox="0 0 24 24"
-                      fill="currentColor"
-                    >
-                      <path d="M12 2 9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5z" />
-                    </svg>
-                  )}
-                  {generate.isPending ? "Thinking…" : "Generate plan"}
-                </button>
-              </div>
+              <button
+                type="button"
+                disabled={!canGenerate}
+                onClick={() => {
+                  setAddedToCal({});
+                  generate.mutate({ context: context.trim(), count });
+                }}
+                className="inline-flex items-center gap-2 rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                title={
+                  undone === 0
+                    ? "Add at least one card first"
+                    : !context.trim()
+                      ? "Type something in the box first"
+                      : "Generate suggestions"
+                }
+              >
+                {generate.isPending ? (
+                  <Spinner />
+                ) : (
+                  <svg
+                    className="h-3.5 w-3.5"
+                    viewBox="0 0 24 24"
+                    fill="currentColor"
+                  >
+                    <path d="M12 2 9.5 9.5 2 12l7.5 2.5L12 22l2.5-7.5L22 12l-7.5-2.5z" />
+                  </svg>
+                )}
+                {generate.isPending ? "Thinking…" : "Generate plan"}
+              </button>
             </div>
             {generate.error && (
               <p className="mt-3 rounded-lg bg-rose-50 px-3 py-2 text-xs text-rose-600 ring-1 ring-rose-100">
@@ -231,7 +282,7 @@ export default function PlannerPage() {
                 <span className="font-semibold">
                   {generate.data.source === "deepseek"
                     ? "DeepSeek API"
-                    : "Sample data fallback"}
+                    : "Local ranking fallback"}
                 </span>
               </p>
             )}
@@ -243,53 +294,33 @@ export default function PlannerPage() {
               <h3 className="text-sm font-semibold text-slate-900">
                 Suggestions
               </h3>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  disabled={suggestions.length === 0}
-                  onClick={handleExportCsv}
-                  className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
-                  title="Export plan as CSV"
+              <button
+                type="button"
+                disabled={suggestions.length === 0}
+                onClick={handleExportCsv}
+                className="inline-flex items-center gap-1.5 rounded-full bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 ring-1 ring-slate-200 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:text-slate-300"
+                title="Export plan as CSV"
+              >
+                <svg
+                  className="h-3.5 w-3.5"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
                 >
-                  <svg
-                    className="h-3.5 w-3.5"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                    <path d="M7 10l5 5 5-5" />
-                    <path d="M12 15V3" />
-                  </svg>
-                  Export CSV
-                </button>
-                {suggestions.length > 0 && (
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-indigo-600 hover:underline"
-                    onClick={() => {
-                      for (const t of suggestions) {
-                        create.mutate({
-                          type: "todo",
-                          name: t.name,
-                          description: t.description,
-                          datetime: t.datetime,
-                          priority: t.priority,
-                          recommendReason: t.recommendReason,
-                        });
-                      }
-                    }}
-                  >
-                    + Add all to my cards
-                  </button>
-                )}
-              </div>
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="M7 10l5 5 5-5" />
+                  <path d="M12 15V3" />
+                </svg>
+                Export CSV
+              </button>
             </div>
 
-            {!generate.data && !generate.isPending && <EmptyHint />}
+            {!generate.data && !generate.isPending && (
+              <EmptyHint hasCards={undone > 0} />
+            )}
 
             {generate.isPending && (
               <div className="overflow-hidden rounded-2xl bg-white ring-1 ring-slate-100">
@@ -312,58 +343,78 @@ export default function PlannerPage() {
                       <tr>
                         <th className="px-3 py-2.5">Name</th>
                         <th className="px-3 py-2.5">Description</th>
-                        <th className="px-3 py-2.5 whitespace-nowrap">
-                          Datetime
-                        </th>
                         <th className="px-3 py-2.5">Recommend Reason</th>
                         <th className="px-3 py-2.5">Priority</th>
-                        <th className="px-3 py-2.5 text-right">Action</th>
+                        <th className="px-3 py-2.5 whitespace-nowrap">
+                          Suggested Time
+                        </th>
+                        <th className="px-3 py-2.5 text-right">Calendar</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                      {suggestions.map((t, i) => (
-                        <tr
-                          key={`${t.name}-${i}`}
-                          className="align-top hover:bg-slate-50/60"
-                        >
-                          <td className="px-3 py-2.5 font-semibold text-slate-900">
-                            {t.name}
-                          </td>
-                          <td className="px-3 py-2.5 text-xs text-slate-600">
-                            {t.description}
-                          </td>
-                          <td className="px-3 py-2.5 text-xs whitespace-nowrap text-slate-500">
-                            {t.datetime}
-                          </td>
-                          <td className="px-3 py-2.5 text-xs text-indigo-700">
-                            {t.recommendReason}
-                          </td>
-                          <td className="px-3 py-2.5">
-                            <span
-                              className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${priorityChip[t.priority]}`}
-                            >
-                              {t.priority}
-                            </span>
-                          </td>
-                          <td className="px-3 py-2.5 text-right">
-                            <button
-                              onClick={() =>
-                                create.mutate({
-                                  type: "todo",
-                                  name: t.name,
-                                  description: t.description,
-                                  datetime: t.datetime,
-                                  priority: t.priority,
-                                  recommendReason: t.recommendReason,
-                                })
-                              }
-                              className="rounded-full bg-indigo-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-indigo-700"
-                            >
-                              + Add
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {suggestions.map((t, i) => {
+                        const key = `${t.name}-${i}`;
+                        const added = addedToCal[key];
+                        return (
+                          <tr
+                            key={key}
+                            className="align-top hover:bg-slate-50/60"
+                          >
+                            <td className="px-3 py-2.5 font-semibold text-slate-900">
+                              {t.name}
+                            </td>
+                            <td className="px-3 py-2.5 text-xs text-slate-600">
+                              {t.description}
+                            </td>
+                            <td className="px-3 py-2.5 text-xs text-indigo-700">
+                              {t.recommendReason}
+                            </td>
+                            <td className="px-3 py-2.5">
+                              <span
+                                className={`inline-block rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${priorityChip[t.priority]}`}
+                              >
+                                {t.priority}
+                              </span>
+                            </td>
+                            <td className="px-3 py-2.5 text-xs whitespace-nowrap text-slate-600">
+                              {t.suggestedTime}
+                            </td>
+                            <td className="px-3 py-2.5 text-right">
+                              <button
+                                type="button"
+                                disabled={
+                                  added || addToCalendar.isPending
+                                }
+                                onClick={() => handleAddToCalendar(t, key)}
+                                className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-[11px] font-semibold transition ${
+                                  added
+                                    ? "bg-emerald-50 text-emerald-600 ring-1 ring-emerald-100"
+                                    : "bg-indigo-600 text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
+                                }`}
+                              >
+                                {added ? (
+                                  <>
+                                    <svg
+                                      className="h-3 w-3"
+                                      viewBox="0 0 24 24"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="3"
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                    >
+                                      <path d="m5 12 5 5L20 7" />
+                                    </svg>
+                                    Added
+                                  </>
+                                ) : (
+                                  "+ Calendar"
+                                )}
+                              </button>
+                            </td>
+                          </tr>
+                        );
+                      })}
                     </tbody>
                   </table>
                 </div>
@@ -372,41 +423,23 @@ export default function PlannerPage() {
 
             {generate.data && suggestions.length === 0 && (
               <p className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center text-xs text-slate-400">
-                No suggestions returned. Try rephrasing your context.
+                No suggestions returned. Add saved cards or rephrase your message.
               </p>
             )}
           </div>
         </div>
 
-        {/* Right — manual create + my cards */}
+        {/* Right — draft form + drafts + saved cards */}
         <div className="space-y-5 lg:col-span-5">
           <form
-            onSubmit={submitManualCard}
+            onSubmit={addDraft}
             className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-slate-100"
           >
-            <h3 className="text-sm font-semibold text-slate-900">
-              New card
-            </h3>
+            <h3 className="text-sm font-semibold text-slate-900">New event</h3>
             <p className="mt-0.5 text-xs text-slate-500">
-              Build a todo or event manually.
+              Describe an event — it stays as a draft until you click{" "}
+              <span className="font-semibold text-slate-700">Save</span>.
             </p>
-
-            <div className="mt-3 inline-flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
-              {(["todo", "event"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => setType(t)}
-                  className={`rounded-lg px-3 py-1.5 transition ${
-                    type === t
-                      ? "bg-white text-slate-900 shadow-sm"
-                      : "text-slate-500"
-                  }`}
-                >
-                  {t === "todo" ? "Todo" : "Event"}
-                </button>
-              ))}
-            </div>
 
             <label className="mt-3 block text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
               Name
@@ -415,9 +448,7 @@ export default function PlannerPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              placeholder={
-                type === "todo" ? "Draft Lab Report intro" : "Study group at library"
-              }
+              placeholder="Study group at library"
               className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 outline-none focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
             />
 
@@ -445,17 +476,73 @@ export default function PlannerPage() {
               </button>
               <button
                 type="submit"
-                disabled={create.isPending || !name.trim()}
+                disabled={!name.trim()}
                 className="rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white hover:bg-indigo-700 disabled:cursor-not-allowed disabled:bg-indigo-300"
               >
-                {create.isPending ? "Saving…" : "Add card"}
+                Add event
               </button>
             </div>
           </form>
 
+          {/* Drafts: each row has Save / Delete */}
+          {drafts.length > 0 && (
+            <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
+              <div className="flex items-center justify-between px-2 pt-1 pb-2">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  Drafts
+                </h3>
+                <span className="text-xs text-slate-400">
+                  Unsaved · click Save to keep
+                </span>
+              </div>
+              <ul className="divide-y divide-slate-100">
+                {drafts.map((d) => (
+                  <li
+                    key={d.draftId}
+                    className="flex items-start gap-3 px-2 py-2.5"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-600 ring-1 ring-rose-100">
+                          event
+                        </span>
+                        <p className="truncate text-sm font-semibold text-slate-900">
+                          {d.name}
+                        </p>
+                      </div>
+                      {d.description && (
+                        <p className="mt-0.5 text-xs text-slate-600">
+                          {d.description}
+                        </p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <button
+                        onClick={() => saveDraft(d)}
+                        disabled={create.isPending}
+                        className="rounded-full bg-emerald-600 px-3 py-1 text-[11px] font-semibold text-white hover:bg-emerald-700 disabled:cursor-not-allowed disabled:bg-emerald-300"
+                      >
+                        Save
+                      </button>
+                      <button
+                        onClick={() => deleteDraft(d.draftId)}
+                        className="rounded-full bg-white px-3 py-1 text-[11px] font-semibold text-rose-600 ring-1 ring-rose-200 hover:bg-rose-50"
+                      >
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Saved cards (server-persisted) */}
           <div className="rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100">
             <div className="flex items-center justify-between px-2 pt-1 pb-2">
-              <h3 className="text-sm font-semibold text-slate-900">My cards</h3>
+              <h3 className="text-sm font-semibold text-slate-900">
+                My cards
+              </h3>
               {cards.length > 0 && (
                 <span className="text-xs text-slate-400">
                   {undone} / {cards.length} active
@@ -474,7 +561,7 @@ export default function PlannerPage() {
               </ul>
             ) : cards.length === 0 ? (
               <p className="px-2 py-6 text-center text-xs text-slate-400">
-                No cards yet. Generate a plan or add one manually.
+                No saved cards yet. Add an event and click Save.
               </p>
             ) : (
               <ul className="divide-y divide-slate-100">
@@ -506,9 +593,7 @@ export default function PlannerPage() {
                     </button>
                     <div className="min-w-0 flex-1">
                       <div className="flex flex-wrap items-center gap-2">
-                        <span
-                          className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${typeChip[c.type]}`}
-                        >
+                        <span className="rounded-full bg-rose-50 px-2 py-0.5 text-[10px] font-semibold text-rose-600 ring-1 ring-rose-100">
                           {c.type}
                         </span>
                         <p
@@ -520,32 +605,11 @@ export default function PlannerPage() {
                         >
                           {c.name}
                         </p>
-                        {c.priority && (
-                          <span
-                            className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ring-1 ${priorityChip[c.priority]}`}
-                          >
-                            {c.priority}
-                          </span>
-                        )}
                       </div>
                       {c.description && (
                         <p className="mt-0.5 text-xs text-slate-600">
                           {c.description}
                         </p>
-                      )}
-                      {(c.datetime ?? c.recommendReason) && (
-                        <div className="mt-1 flex flex-wrap items-center gap-3 text-[11px] text-slate-500">
-                          {c.datetime && (
-                            <span className="inline-flex items-center gap-1">
-                              <CalIcon /> {c.datetime}
-                            </span>
-                          )}
-                          {c.recommendReason && (
-                            <span className="truncate text-indigo-600">
-                              · {c.recommendReason}
-                            </span>
-                          )}
-                        </div>
                       )}
                     </div>
                     <button
@@ -576,34 +640,20 @@ export default function PlannerPage() {
   );
 }
 
-function EmptyHint() {
+function EmptyHint({ hasCards }: { hasCards: boolean }) {
   return (
     <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 p-6 text-center">
       <p className="text-sm font-semibold text-slate-700">
-        Describe your week and tap <span className="text-indigo-600">Generate plan</span>.
+        {hasCards
+          ? "Describe your week and tap Generate plan."
+          : "Add at least one saved event first."}
       </p>
       <p className="mt-1 text-xs text-slate-500">
-        StudyFlow will return a list of suggested tasks with reasons. You decide
-        which ones to keep.
+        {hasCards
+          ? "StudyFlow will pick the most relevant events for what you just said and propose a time slot for each."
+          : "Suggestions are drawn from your saved events. Build one on the right and click Save to start."}
       </p>
     </div>
-  );
-}
-
-function CalIcon() {
-  return (
-    <svg
-      className="h-3.5 w-3.5"
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <rect x="3" y="5" width="18" height="16" rx="2" />
-      <path d="M3 9h18M8 3v4M16 3v4" />
-    </svg>
   );
 }
 

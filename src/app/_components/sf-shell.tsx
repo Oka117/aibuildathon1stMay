@@ -112,16 +112,16 @@ export function SfShell({ children }: { children: ReactNode }) {
   const pathname = usePathname();
 
   return (
-    <div className="flex min-h-screen w-full bg-[var(--color-sf-bg)]">
-      {/* Sidebar */}
-      <aside className="sticky top-0 hidden h-screen w-[80px] shrink-0 flex-col border-r border-slate-200 bg-white md:flex lg:w-[240px]">
+    <div className="flex min-h-screen w-full">
+      {/* Sidebar — frosted glass over the global sky gradient */}
+      <aside className="sticky top-0 hidden h-screen w-[80px] shrink-0 flex-col border-r border-white/40 bg-white/55 backdrop-blur-xl md:flex lg:w-[240px]">
         <div className="flex items-center gap-2 px-4 pt-6 pb-6 lg:px-6">
-          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-indigo-600 text-base font-bold text-white shadow-sm">
+          <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-sky-600 text-base font-bold text-white shadow-sm">
             S
           </div>
           <div className="hidden text-[20px] font-bold tracking-tight lg:block">
             <span className="text-slate-900">Study</span>
-            <span className="text-[var(--color-sf-primary)]">Flow</span>
+            <span className="text-sky-600">Flow</span>
           </div>
         </div>
 
@@ -139,15 +139,15 @@ export function SfShell({ children }: { children: ReactNode }) {
                     title={item.label}
                     className={`flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition lg:px-4 ${
                       active
-                        ? "bg-indigo-50 text-[var(--color-sf-primary)]"
-                        : "text-slate-600 hover:bg-slate-50 hover:text-slate-900"
+                        ? "bg-white/80 text-sky-700 shadow-sm"
+                        : "text-slate-700 hover:bg-white/60 hover:text-slate-900"
                     }`}
                   >
                     <span className="shrink-0">{item.icon}</span>
                     <span className="hidden flex-col leading-tight lg:flex">
                       <span>{item.label}</span>
                       <span
-                        className={`text-[10px] font-normal ${active ? "text-indigo-400" : "text-slate-400"}`}
+                        className={`text-[10px] font-normal ${active ? "text-sky-500" : "text-slate-500"}`}
                       >
                         {item.hint}
                       </span>
@@ -158,8 +158,8 @@ export function SfShell({ children }: { children: ReactNode }) {
             })}
           </ul>
 
-          <div className="mt-6 hidden rounded-2xl bg-gradient-to-br from-indigo-500 to-indigo-700 p-4 text-white shadow-sm lg:block">
-            <p className="text-[10px] font-semibold tracking-[0.18em] uppercase opacity-80">
+          <div className="mt-6 hidden rounded-2xl bg-gradient-to-br from-sky-500 to-sky-700 p-4 text-white shadow-md lg:block">
+            <p className="text-[10px] font-semibold tracking-[0.18em] uppercase opacity-85">
               Tip
             </p>
             <p className="mt-1 text-sm leading-snug">
@@ -168,16 +168,16 @@ export function SfShell({ children }: { children: ReactNode }) {
           </div>
         </nav>
 
-        <div className="border-t border-slate-100 px-3 py-4 lg:px-4">
+        <div className="border-t border-white/40 px-3 py-4 lg:px-4">
           <div className="flex items-center gap-3">
-            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-indigo-400 to-indigo-600 text-sm font-semibold text-white">
+            <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-gradient-to-br from-sky-400 to-sky-600 text-sm font-semibold text-white">
               A
             </div>
             <div className="hidden min-w-0 lg:block">
               <p className="truncate text-sm font-semibold text-slate-900">
                 Alex Chen
               </p>
-              <p className="truncate text-[11px] text-slate-500">
+              <p className="truncate text-[11px] text-slate-600">
                 ANU · CECS
               </p>
             </div>
@@ -187,14 +187,14 @@ export function SfShell({ children }: { children: ReactNode }) {
 
       {/* Main column */}
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-slate-200 bg-white/80 px-4 py-3 backdrop-blur md:px-8">
+        <header className="sticky top-0 z-10 flex items-center justify-between gap-4 border-b border-white/40 bg-white/55 px-4 py-3 backdrop-blur-xl md:px-8">
           <div className="flex items-center gap-3">
             {/* Mobile-only logo */}
             <div className="text-lg font-bold tracking-tight md:hidden">
               <span className="text-slate-900">Study</span>
-              <span className="text-[var(--color-sf-primary)]">Flow</span>
+              <span className="text-sky-600">Flow</span>
             </div>
-            <div className="hidden items-center gap-2 rounded-xl bg-slate-50 px-3 py-2 ring-1 ring-slate-200 md:flex md:w-[420px]">
+            <div className="hidden items-center gap-2 rounded-xl bg-white/70 px-3 py-2 ring-1 ring-white/60 md:flex md:w-[420px]">
               <svg
                 className="h-4 w-4 text-slate-400"
                 viewBox="0 0 24 24"
@@ -218,7 +218,7 @@ export function SfShell({ children }: { children: ReactNode }) {
           </div>
           <div className="flex items-center gap-3">
             <button
-              className="relative grid h-9 w-9 place-items-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200"
+              className="relative grid h-9 w-9 place-items-center rounded-full bg-white/70 text-slate-600 ring-1 ring-white/60 transition hover:bg-white"
               aria-label="Notifications"
             >
               <svg
@@ -233,12 +233,12 @@ export function SfShell({ children }: { children: ReactNode }) {
                 <path d="M6 8a6 6 0 1 1 12 0c0 7 3 8 3 8H3s3-1 3-8" />
                 <path d="M10.3 21a1.94 1.94 0 0 0 3.4 0" />
               </svg>
-              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-[var(--color-sf-danger)]" />
+              <span className="absolute top-2 right-2 h-2 w-2 rounded-full bg-rose-500" />
             </button>
-            <button className="hidden rounded-full bg-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-indigo-700 md:inline-flex">
+            <button className="hidden rounded-full bg-sky-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-sky-700 md:inline-flex">
               + Quick add
             </button>
-            <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-indigo-400 to-indigo-600 text-sm font-semibold text-white md:hidden">
+            <div className="grid h-9 w-9 place-items-center rounded-full bg-gradient-to-br from-sky-400 to-sky-600 text-sm font-semibold text-white md:hidden">
               A
             </div>
           </div>
@@ -249,7 +249,7 @@ export function SfShell({ children }: { children: ReactNode }) {
         </main>
 
         {/* Mobile bottom nav (visible only when sidebar is hidden) */}
-        <nav className="fixed right-0 bottom-0 left-0 z-20 border-t border-slate-200 bg-white/95 px-2 pt-2 pb-3 backdrop-blur md:hidden">
+        <nav className="fixed right-0 bottom-0 left-0 z-20 border-t border-white/40 bg-white/80 px-2 pt-2 pb-3 backdrop-blur-xl md:hidden">
           <ul className="flex items-center justify-between">
             {navItems.map((item) => {
               const active =
@@ -261,9 +261,7 @@ export function SfShell({ children }: { children: ReactNode }) {
                   <Link
                     href={item.href}
                     className={`flex flex-col items-center gap-1 rounded-xl py-1.5 text-[11px] font-medium transition ${
-                      active
-                        ? "text-[var(--color-sf-primary)]"
-                        : "text-slate-500 hover:text-slate-900"
+                      active ? "text-sky-700" : "text-slate-600 hover:text-slate-900"
                     }`}
                   >
                     {item.icon}
