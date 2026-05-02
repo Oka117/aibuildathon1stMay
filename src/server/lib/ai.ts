@@ -1,9 +1,10 @@
 /**
  * AI plan generator.
  *
- * If process.env.ANTHROPIC_API_KEY is set, we call the Anthropic Messages API
- * directly via fetch (no SDK dependency) and ask Claude to return a JSON list
- * of tasks following the SampleTask shape.
+ * If process.env.DEEPSEEK_API_KEY is set, we call the DeepSeek Chat
+ * Completions API (OpenAI-compatible) directly via fetch (no SDK
+ * dependency) and ask the model to return a JSON list of tasks
+ * following the SampleTask shape.
  *
  * If no key is configured, we fall back to a deterministic stub that picks
  * tasks from the seeded sampleTasks list, lightly biased by keywords in the
@@ -59,30 +60,34 @@ export type GeneratePlanInput = {
 };
 
 export type GeneratePlanResult = {
-  source: "anthropic" | "stub";
+  source: "deepseek" | "stub";
   tasks: SampleTask[];
   note?: string;
 };
+
+const DEEPSEEK_API_URL =
+  process.env.DEEPSEEK_API_URL ?? "https://api.deepseek.com/v1/chat/completions";
+const DEEPSEEK_MODEL = process.env.DEEPSEEK_MODEL ?? "deepseek-chat";
 
 export async function generatePlan({
   context,
   count,
 }: GeneratePlanInput): Promise<GeneratePlanResult> {
-  const apiKey = process.env.ANTHROPIC_API_KEY;
+  const apiKey = process.env.DEEPSEEK_API_KEY;
   const safeCount = Math.min(Math.max(count, 1), 10);
 
   if (apiKey && apiKey.trim().length > 0) {
     try {
-      const tasks = await callAnthropic(apiKey, context, safeCount);
-      return { source: "anthropic", tasks };
+      const tasks = await callDeepSeek(apiKey, context, safeCount);
+      return { source: "deepseek", tasks };
     } catch (err) {
       const message =
-        err instanceof Error ? err.message : "Unknown Anthropic error";
+        err instanceof Error ? err.message : "Unknown DeepSeek error";
       // Fall back to the stub but flag the failure so the UI can show it.
       return {
         source: "stub",
         tasks: stubPlan(context, safeCount),
-        note: `Anthropic call failed (${message}); using sample-data fallback.`,
+        note: `DeepSeek call failed (${message}); using sample-data fallback.`,
       };
     }
   }
@@ -90,47 +95,54 @@ export async function generatePlan({
   return {
     source: "stub",
     tasks: stubPlan(context, safeCount),
-    note: "ANTHROPIC_API_KEY not set — using sample-data fallback.",
+    note: "DEEPSEEK_API_KEY not set — using sample-data fallback.",
   };
 }
 
-async function callAnthropic(
+async function callDeepSeek(
   apiKey: string,
   context: string,
   count: number,
 ): Promise<SampleTask[]> {
   const userPrompt = `Student context:\n"""\n${context}\n"""\n\nProduce exactly ${count} tasks.`;
 
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
+  const r = await fetch(DEEPSEEK_API_URL, {
     method: "POST",
     headers: {
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
+      Authorization: `Bearer ${apiKey}`,
       "content-type": "application/json",
     },
     body: JSON.stringify({
-      model: "claude-haiku-4-5-20251001",
+      model: DEEPSEEK_MODEL,
+      // DeepSeek (OpenAI-compatible) supports JSON mode via response_format.
+      // This greatly increases the chances of getting parseable JSON back.
+      response_format: { type: "json_object" },
       max_tokens: 1500,
-      system: SYSTEM_PROMPT,
-      messages: [{ role: "user", content: userPrompt }],
+      temperature: 0.7,
+      messages: [
+        { role: "system", content: SYSTEM_PROMPT },
+        { role: "user", content: userPrompt },
+      ],
     }),
   });
 
   if (!r.ok) {
     const body = await r.text().catch(() => "");
-    throw new Error(`Anthropic ${r.status}: ${body.slice(0, 200)}`);
+    throw new Error(`DeepSeek ${r.status}: ${body.slice(0, 200)}`);
   }
 
   const data = (await r.json()) as {
-    content?: Array<{ type: string; text?: string }>;
+    choices?: Array<{
+      message?: { content?: string };
+    }>;
   };
 
-  const text = (data.content ?? [])
-    .map((c) => c.text ?? "")
-    .join("")
-    .trim();
+  const text = (data.choices?.[0]?.message?.content ?? "").trim();
+  if (!text) {
+    throw new Error("Empty response from DeepSeek");
+  }
 
-  // Extract the first {...} block in case Claude added stray prose.
+  // Extract the first {...} block in case the model added stray prose.
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
   if (start < 0 || end < 0 || end <= start) {
